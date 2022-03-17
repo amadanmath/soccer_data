@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+
+# pip install tqdm numpy pandas opencv-contrib-python==4.4.0.46
+
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,8 +18,6 @@ import pandas as pd # type: ignore
 
 from .soccer_data import SoccerText, SoccerData
 from .audio_gen import Polly, AudioGen
-
-# pip install tqdm numpy pandas opencv-contrib-python==4.4.0.46
 
 
 
@@ -234,9 +236,15 @@ class VideoGen:
 
             if isinstance(player_name, str):
                 player_jersey = self.data.play["選手背番号"][ix]
-                player_jersey = "?" if math.isnan(player_jersey) else int(player_jersey)
-                self.ft.putText(self.img, f"{player_jersey}　{player_name}", (tx, ty + action_font_size), player_font_size, team_colour, -1, cv2.LINE_AA, False)
-                person_ix = next((person_ix for person_ix in self.frame_ixs if self.data.tracking["背番号"][person_ix] == player_jersey and self.data.tracking["ホームアウェイF"][person_ix] == play_team), None)
+                has_player = not pd.isna(player_jersey)
+                player_jersey_display = player_jersey if has_player else "?"
+                self.ft.putText(self.img, f"{player_jersey_display}　{player_name}", (tx, ty + action_font_size), player_font_size, team_colour, -1, cv2.LINE_AA, False)
+                person_ix = has_player and next(
+                    (
+                        person_ix for person_ix in self.frame_ixs
+                        if self.data.tracking["背番号"][person_ix] == player_jersey
+                        and self.data.tracking["ホームアウェイF"][person_ix] == play_team
+                    ), None)
                 if person_ix:
                     player_team = self.data.tracking['ホームアウェイF'][person_ix]
                     x = int(self.data.tracking['座標X'][person_ix] / scale + cx)
