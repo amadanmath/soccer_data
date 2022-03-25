@@ -2,6 +2,7 @@
 
 # pip install pandas openpyxl
 
+from bisect import bisect
 from datetime import timedelta
 from pathlib import Path
 import json
@@ -329,6 +330,8 @@ class SoccerData:
         self.play_gby_frame = self.play.groupby("フレーム番号")
         self.text_gby_frame = self.text.groupby('フレーム番号')
 
+        self.play_frames = sorted(self.play_gby_frame.groups.keys())
+
 
     def from_frame(self, frame_no: int) -> Tuple[int, timedelta]:
         """Converts frame number to time in period.
@@ -365,7 +368,6 @@ class SoccerData:
 
         Parameters
         ----------
-
         period: int
             Period (1 or 2)
             If the frame falls outside either period, 0
@@ -390,6 +392,50 @@ class SoccerData:
             frame_offset = self._half[period - 1].start
         return frame_offset + num_frames
 
+
+    def closest_play_frame(self, frame_no: int) -> int:
+        """Returns the given frame, or the closest past frame for which a play exists
+
+        Parameters
+        ----------
+        frame_no: int
+            The frame to look up
+
+        Returns
+        -------
+        relevant_frame_no: int
+            The given frame if there are any plays for it, or the closest such frame in the past
+        """
+        bisect_ix = bisect(self.play_frames, frame_no)
+        if bisect_ix == 0:
+            return None
+        else:
+            return self.play_frames[bisect_ix - 1]
+
+
+    def score(self, frame_no):
+        """Finds the score at the given frame
+
+        Parameters
+        ----------
+        frame_no: int
+            The frame to look up
+
+        Returns
+        -------
+        score: (int, int)
+            Tuple `(team_1_score, team_2_score)`
+        """
+        score_frame = self.closest_play_frame(frame_no)
+        if score_frame is not None:
+            score_ix = self.play_gby_frame.groups[score_frame][0]
+            score = (self.play["自スコア"][score_ix], self.play["相手スコア"][score_ix])
+        else:
+            score = (0, 0)
+        play_team = self.play['ホームアウェイF'][score_ix]
+        if play_team == 2:
+            score = tuple(reversed(score))
+        return score
 
 
 if __name__ == '__main__':

@@ -2,10 +2,11 @@
 
 # pip install tqdm numpy pandas opencv-contrib-python==4.4.0.46
 
-from datetime import timedelta
+from datetime import timedelta, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+import argparse
 import json
 import math
 import subprocess
@@ -50,6 +51,8 @@ white = (255, 255, 255)
 ball_colour = (255, 255, 255)
 ball_radius = 10
 
+progress_colours = ((128, 128, 128), (0, 0, 255))
+
 htwidth, htheight = 5250, 3400
 xmargin, ymargin = 20, 20
 
@@ -93,8 +96,7 @@ class ActionDisplay:
 class VideoGen:
     def __init__(self, args):
         self.args = args
-        self.data = SoccerData(args.corpus_dir / args.game_id, args.text)
-        self.score = (0, 0)
+        self.data = SoccerData(args.game, args.text)
 
         self.action_displays = []
         self.action_display_death = None
@@ -263,8 +265,6 @@ class VideoGen:
                     cv2.fillPoly(self.img, [points], action_colour)
                     # cv2.circle(self.img, (x, y), radius + 3, action_colour, -1)
 
-            self.score = (self.data.play["自スコア"][ix], self.data.play["相手スコア"][ix])
-
         if self.action_display_death:
             self.action_display_death -= 1
             if not self.action_display_death:
@@ -294,7 +294,7 @@ class VideoGen:
             pass
 
 
-    def display_stats(self, stats):
+    def display_stats(self):
         period, time = self.data.from_frame(self.frame_no)
         if period:
             time_text = f"{time}"
@@ -307,8 +307,11 @@ class VideoGen:
             ptx = width - ptw - 10
             pty = pth + tty + 5
             cv2.putText(self.img, period_text, (ptx, pty), font, time_tscale, time_colour, 2)
-            score_texts = [str(self.score[0]), ":", str(self.score[1])]
-            score_colours = [team_colours[1][1], time_colour, team_colours[2][1]]
+
+            score = self.data.score(self.frame_no)
+            team_ixs = [(0, 1), (1, 0)][period - 1]
+            score_texts = [str(score[team_ixs[0]]), ":", str(score[team_ixs[1]])]
+            score_colours = [team_colours[team_ixs[0] + 1][1], time_colour, team_colours[team_ixs[1] + 1][1]]
             stws = []
             for score_text in score_texts:
                 stw, sth = cv2.getTextSize(score_text, font, time_tscale, 2)[0]
@@ -320,6 +323,10 @@ class VideoGen:
                 stx += stw
 
 
+    def display_progress_bar(self, complete):
+        cv2.rectangle(self.img, (0, height - 1), (width - 1, height - 2), progress_colours[0], 1)
+        cv2.rectangle(self.img, (0, height - 1), (int(complete * width) - 1, height - 2), progress_colours[1], 1)
+
 
     def make_frame(self, frame_no, frame_ixs):
         self.img = self.background.copy(order='K')
@@ -327,16 +334,16 @@ class VideoGen:
         self.frame_ixs = frame_ixs
 
         self.detect_current_actions()
-        play_stats = self.display_actions()
+        self.display_actions()
 
         self.display_people()
         self.display_ball()
-        self.display_stats(play_stats)
+        self.display_stats()
         return self.img
 
 
     def make_audio(self, duration):
-        audio_output_path = self.args.output_dir / (self.args.game_id + ".mp3")
+        audio_output_path = self.args.out / (self.args.game_id + ".mp3")
         zero_frame = self.data.tracking['フレーム番号'][0]
         audio_gen = AudioGen(duration, self.args.polly)
 
@@ -389,53 +396,126 @@ class VideoGen:
 
 
     def make_video(self):
-        output_path = self.args.output_dir / (self.args.game_id + ".mp4")
+        output_path = self.args.out / (self.args.game_id + ".mp4")
         out = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
         try:
-            it = self.data.tracking_gby_frame.groups.items()
-            if self.args.progress:
+            first_frame = self.data.tracking["フレーム番号"].min()
+            last_frame = self.data.tracking["フレーム番号"].max()
+            num_frames = last_frame - first_frame + 1
+            it = range(args.range[0] or 0, args.range[1] or num_frames)
+            if not self.args.no_progress:
                 it = tqdm(it)
-            out_frame_no = 0
-            for frame_no, frame_ixs in it:
-                if args.from_frame is not None and out_frame_no < args.from_frame:
-                    continue
-                if args.till_frame is not None and out_frame_no >= args.till_frame:
-                    break
-
+            for frame_ix in it:
+                frame_no = first_frame + frame_ix
+                frame_ixs = self.data.tracking_gby_frame.groups.get(frame_no, [])
                 img = self.make_frame(frame_no, frame_ixs)
                 out.write(img)
 
-                out_frame_no += 1
         finally:
             out.release()
 
-        if args.audio:
-            audio_output_path = self.make_audio(out_frame_no / fps)
-
-        if args.audio != "nomux":
-            self.mux(output_path, audio_output_path)
-
-        print("done")
-
+        if not args.no_audio:
+            audio_output_path = self.make_audio(num_frames / fps)
+            if not args.no_mux:
+                self.mux(output_path, audio_output_path)
 
         return output_path
 
 
+    def show_video(self):
+        try:
+            frames = list(self.data.tracking_gby_frame.groups.keys())
+            first_frame = self.data.tracking["フレーム番号"].min()
+            last_frame = self.data.tracking["フレーム番号"].max()
+            num_frames = last_frame - first_frame + 1
+            frame_ix = 0
+            frame_length = 1000 / fps
+            play_start_frame_ix = None
+            paused = False
+            while True:
+                if play_start_frame_ix is None:
+                    play_start_dt = datetime.now()
+                    play_start_frame_ix = frame_ix
+
+                frame_start_dt = datetime.now()
+                frame_no = first_frame + frame_ix
+                frame_ixs = self.data.tracking_gby_frame.groups.get(frame_no, [])
+                img = self.make_frame(frame_no, frame_ixs)
+                self.display_progress_bar(frame_ix / num_frames)
+                if not paused:
+                    frame_ix += 1
+                cv2.imshow(self.args.game_id, img)
+
+                delta_frames = frame_ix - play_start_frame_ix
+                actual_delta_ms = int((datetime.now() - play_start_dt).total_seconds() * 1000)
+                ideal_delta_ms = int(1000 * delta_frames / fps)
+                catch_up_ms = ideal_delta_ms - actual_delta_ms
+                if catch_up_ms < 1:
+                    catch_up_ms = 1
+                key = cv2.waitKey(catch_up_ms)
+
+                jump = None
+                if key == 27: # esc
+                    return
+                elif key == 97: # a
+                    jump = -5
+                elif key == 100: # d
+                    jump = 5
+                elif key == 113: # q
+                    jump = -60
+                elif key == 101: # e
+                    jump = 60
+                elif key == 32: # space
+                    paused = not paused
+
+                if jump is not None:
+                    frame_ix += int(jump * fps)
+                    if frame_ix < 0:
+                        frame_ix = 0
+                    play_start_frame_ix = None
+
+                if frame_ix >= num_frames:
+                    return
+
+        finally:
+            cv2.destroyAllWindows()
+
+
+default_text_path = Path("/groups/gac50547/SoccerData/data_stadium/docs/テキスト速報データ_2021年J1_7節～10節_40試合.xlsx")
+default_polly_cache = Path("~/.local/state/soccer_game/polly_cache").expanduser()
+default_out_path = Path(".")
+default_region = "ap-northeast-1"
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Visualise SoccerData game")
+    parser.add_argument("game", type=Path, help="the dir containing the game files")
+    parser.add_argument("--out", "-o", type=Path, help="the output dir (if not supplied, visualise interactively")
+    parser.add_argument("--text", "-t", type=Path, default=default_text_path, help="Path to the XLSX file with texts")
+    parser.add_argument("--no-audio", "-A", action="store_true", help="Do not generate audio")
+    parser.add_argument("--no-mux", "-M", action="store_true", help="Do not mux audio")
+    parser.add_argument("--no-progress", "-P", action="store_true", help="Do not display progress")
+    parser.add_argument("--range", default=":", help="Range in seconds `start:end` (default: whole game)")
+    parser.add_argument("--profile", help="AWS profile name")
+    parser.add_argument("--region", default=default_region, help="AWS region")
+    parser.add_argument("--polly-cache-dir", type=Path, help="TTS cache dir", default=default_polly_cache)
+    args = parser.parse_args()
+    if ":" not in args.range:
+        args.range += ":"
+    args.range = tuple(int(float(x) * fps) if x else None for x in args.range.split(':'))
+    args.polly_cache_dir.mkdir(parents=True, exist_ok=True)
+    args.game_id = args.game.name
+    if not args.no_audio:
+        args.polly = Polly(args.profile, args.region, args.polly_cache_dir)
+    return args
+
 
 
 if __name__ == "__main__":
-    args = SimpleNamespace(
-        text_path=Path("docs/テキスト速報データ_2021年J1_7節～10節_40試合.xlsx"),
-        corpus_dir=Path(""),
-        game_id="sample_game",
-        output_dir=Path("out"),
-        progress=True,
-        audio=True,
-        from_frame=None,
-        till_frame=fps * 4 * 60,
-        polly=Polly('mine', 'ap-northeast-1', 'polly-cache'),
-    )
-    args.text=SoccerText(args.text_path)
+    args = parse_args()
+    args.text=SoccerText(args.text)
     video_gen = VideoGen(args)
-    output_path = video_gen.make_video()
-    print(output_path)
+    if args.out is None:
+        video_gen.show_video()
+    else:
+        output_path = video_gen.make_video()
+        print(output_path)
