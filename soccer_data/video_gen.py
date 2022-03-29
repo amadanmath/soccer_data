@@ -98,13 +98,16 @@ class VideoGen:
         self.args = args
         self.data = SoccerData(args.game, args.text)
 
-        self.action_displays = []
-        self.action_display_death = None
-
         self.ft = cv2.freetype.createFreeType2()
         self.ft.loadFontData(fontFileName='/Library/Fonts/Arial Unicode.ttf', id=0)
 
+        self.reset_action_displays()
         self.make_background()
+
+
+    def reset_action_displays(self):
+        self.action_displays = []
+        self.action_display_death = None
 
 
     def make_background(self):
@@ -469,6 +472,7 @@ class VideoGen:
                     paused = not paused
 
                 if jump is not None:
+                    self.reset_action_displays()
                     frame_ix += int(jump * fps)
                     if frame_ix < 0:
                         frame_ix = 0
