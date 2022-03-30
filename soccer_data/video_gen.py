@@ -425,31 +425,40 @@ class VideoGen:
         return output_path
 
 
+    def click_handler(self, evt, x, y, flags, params):
+        if evt == cv2.EVENT_LBUTTONDOWN:
+            self.frame_ix = int(x * self.num_frames / width)
+            self.play_start_frame_ix = None
+
+
     def show_video(self):
         try:
+            cv2.namedWindow(self.args.game_id)
+            cv2.setMouseCallback(self.args.game_id, self.click_handler)
+
             frames = list(self.data.tracking_gby_frame.groups.keys())
-            first_frame = self.data.tracking["フレーム番号"].min()
-            last_frame = self.data.tracking["フレーム番号"].max()
-            num_frames = last_frame - first_frame + 1
-            frame_ix = 0
+            self.first_frame = self.data.tracking["フレーム番号"].min()
+            self.last_frame = self.data.tracking["フレーム番号"].max()
+            self.num_frames = self.last_frame - self.first_frame + 1
+            self.frame_ix = 0
             frame_length = 1000 / fps
-            play_start_frame_ix = None
+            self.play_start_frame_ix = None
             paused = False
             while True:
-                if play_start_frame_ix is None:
+                if self.play_start_frame_ix is None:
                     play_start_dt = datetime.now()
-                    play_start_frame_ix = frame_ix
+                    self.play_start_frame_ix = self.frame_ix
 
                 frame_start_dt = datetime.now()
-                frame_no = first_frame + frame_ix
+                frame_no = self.first_frame + self.frame_ix
                 frame_ixs = self.data.tracking_gby_frame.groups.get(frame_no, [])
                 img = self.make_frame(frame_no, frame_ixs)
-                self.display_progress_bar(frame_ix / num_frames)
+                self.display_progress_bar(self.frame_ix / self.num_frames)
                 if not paused:
-                    frame_ix += 1
+                    self.frame_ix += 1
                 cv2.imshow(self.args.game_id, img)
 
-                delta_frames = frame_ix - play_start_frame_ix
+                delta_frames = self.frame_ix - self.play_start_frame_ix
                 actual_delta_ms = int((datetime.now() - play_start_dt).total_seconds() * 1000)
                 ideal_delta_ms = int(1000 * delta_frames / fps)
                 catch_up_ms = ideal_delta_ms - actual_delta_ms
@@ -473,16 +482,16 @@ class VideoGen:
 
                 if jump is not None:
                     self.reset_action_displays()
-                    frame_ix += int(jump * fps)
-                    if frame_ix < 0:
-                        frame_ix = 0
-                    play_start_frame_ix = None
+                    self.frame_ix += int(jump * fps)
+                    if self.frame_ix < 0:
+                        self.frame_ix = 0
+                    self.play_start_frame_ix = None
 
-                if frame_ix >= num_frames:
+                if self.frame_ix >= self.num_frames:
                     return
 
         finally:
-            cv2.destroyAllWindows()
+            cv2.destroyWindow(self.args.game_id)
 
 
 default_text_path = Path("/groups/gac50547/SoccerData/data_stadium/docs/テキスト速報データ_2021年J1_7節～10節_40試合.xlsx")

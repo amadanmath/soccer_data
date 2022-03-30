@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 
 import boto3
-from pydub import AudioSegment
+from pydub import AudioSegment, effects
 from pydub.playback import play
 
 
@@ -56,7 +56,9 @@ class AudioGen:
         self.polly = polly or Polly()
         self.canvas = AudioSegment.silent(frame_rate=frame_rate, duration=int(duration * 1000))
 
-    def add(self, when, audio):
+    def add(self, when, audio, speedup=None):
+        if speedup:
+            audio = audio.speedup(speedup)
         self.canvas = self.canvas.overlay(audio, position=int(when * 1000))
 
     def get(self):
