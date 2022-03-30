@@ -495,7 +495,7 @@ class VideoGen:
 
 
 default_text_path = Path("/groups/gac50547/SoccerData/data_stadium/docs/テキスト速報データ_2021年J1_7節～10節_40試合.xlsx")
-default_polly_cache = Path("~/.local/state/soccer_game/polly_cache").expanduser()
+default_polly_cache = Path("~/.local/state/soccer_data/polly_cache").expanduser()
 default_out_path = Path(".")
 default_region = "ap-northeast-1"
 
